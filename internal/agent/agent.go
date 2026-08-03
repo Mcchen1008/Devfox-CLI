@@ -360,7 +360,12 @@ func Run(cfg *config.Config, mgr *skills.Manager) int {
 				}
 			}
 
-			if hasTools && len(toolCalls) > 0 && round < MaxToolRounds {
+			if hasTools && len(toolCalls) > 0 {
+				if round >= MaxToolRounds {
+					finalReply = "工具调用轮数超过上限（8轮），已停止。请尝试拆分任务。"
+					done = true
+					break
+				}
 				fmt.Println()
 				ui.Puts(ui.ToolCall, "[工具]")
 				fmt.Printf(" 第 %d 轮调用\n", round+1)

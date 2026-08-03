@@ -82,11 +82,51 @@ func getInt(args map[string]any, key string, def int) int {
 
 // ==================== 终端命令 ====================
 
+// isPureCd 判断是否为纯 cd 命令（如 "cd /"、"cd ~/x"、"cd"）
+// 不含 &&、|、; 等组合操作符
+func isPureCd(cmd string) bool {
+	t := strings.TrimSpace(cmd)
+	if t == "cd" {
+		return true
+	}
+	if !strings.HasPrefix(t, "cd ") {
+		return false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(t, "cd"))
+	// 后续部分只能是简单路径（可带引号），不能包含 shell 操作符
+	for _, ch := range rest {
+		if strings.ContainsRune("&|;<>`$(){}", ch) {
+			return false
+		}
+	}
+	return true
+}
+
 func toolExecuteCommand(args map[string]any) string {
 	cmd := getStr(args, "command")
 	if cmd == "" {
 		return "✗ 缺少参数: command"
 	}
+
+	// 纯 cd 命令：子 shell 的 cd 不会改变 Agent 进程工作目录，
+	// 这里直接持久化切换，避免模型反复重试死循环
+	if isPureCd(cmd) {
+		dir := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(cmd), "cd"))
+		dir = strings.Trim(dir, "\"'")
+		if dir == "" || dir == "~" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "✗ 获取用户主目录失败"
+			}
+			dir = home
+		}
+		if err := os.Chdir(dir); err != nil {
+			return fmt.Sprintf("✗ 切换目录失败: %v", err)
+		}
+		wd, _ := os.Getwd()
+		return fmt.Sprintf("✓ 工作目录已切换: %s", wd)
+	}
+
 	cwd := getStr(args, "cwd")
 	timeout := getInt(args, "timeout", 60)
 	if timeout <= 0 {
@@ -401,7 +441,7 @@ func copyPath(src, dst string) error {
 var BaseTools = []ToolDef{
 	{
 		"execute_command",
-		"执行终端命令。用于运行 shell 命令、安装软件包、执行脚本、查看进程等。注意：危险命令（如 rm -rf）会被拦截并要求确认。",
+		"执行终端命令。用于运行 shell 命令、安装软件包、执行脚本、查看进程等。注意：危险命令（如 rm -rf）会被拦截并要求确认。执行 cd 命令会实际切换后续命令的工作目录（持久生效）。",
 		`{"type":"object","properties":{"command":{"type":"string","description":"要执行的终端命令，例如 'ls -la'"},"cwd":{"type":"string","description":"命令执行的工作目录（可选），默认当前目录"},"timeout":{"type":"integer","description":"超时秒数（可选），默认60"}},"required":["command"]}`,
 		toolExecuteCommand,
 	},
