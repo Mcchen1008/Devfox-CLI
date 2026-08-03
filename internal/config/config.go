@@ -20,6 +20,39 @@ type Config struct {
 	MaxRetries     int
 }
 
+// Limits 工具调用限制配置（config/limits.json，独立配置文件）
+type Limits struct {
+	MaxToolRounds    int `json:"max_tool_rounds"`     // LLM 决策轮次上限
+	MaxToolCallsTotal int `json:"max_tool_calls_total"` // 总体工具调用次数上限
+	MaxSameToolCalls  int `json:"max_same_tool_calls"`  // 相同工具+相同参数连续调用上限
+}
+
+// LoadLimits 从 config/limits.json 加载；文件不存在时使用默认值
+func LoadLimits(path string) (*Limits, error) {
+	l := &Limits{
+		MaxToolRounds:     64,
+		MaxToolCallsTotal: 64,
+		MaxSameToolCalls:  4,
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return l, nil // 无文件用默认
+	}
+	if err := json.Unmarshal(data, l); err != nil {
+		return nil, fmt.Errorf("limits 配置解析失败: %v", err)
+	}
+	if l.MaxToolRounds <= 0 {
+		l.MaxToolRounds = 64
+	}
+	if l.MaxToolCallsTotal <= 0 {
+		l.MaxToolCallsTotal = 64
+	}
+	if l.MaxSameToolCalls <= 0 {
+		l.MaxSameToolCalls = 4
+	}
+	return l, nil
+}
+
 // Load 从 config.json 的 "devfox" 段加载，支持环境变量覆盖：
 // DEVFOX_API_KEY / DEVFOX_BASE_URL / DEVFOX_MODEL
 func Load(path string) (*Config, error) {

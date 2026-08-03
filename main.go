@@ -67,6 +67,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	limits, err := config.LoadLimits(filepath.Join(filepath.Dir(cfgPath), "limits.json"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "请检查 %s 配置文件是否正确\n", filepath.Join(filepath.Dir(cfgPath), "limits.json"))
+		os.Exit(1)
+	}
+
 	mgr := skills.New(skillsPath)
-	os.Exit(agent.Run(cfg, mgr))
+	os.Exit(agent.Run(cfg, mgr, limits))
 }

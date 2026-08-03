@@ -19,9 +19,8 @@ import (
 )
 
 const (
-	MaxToolRounds     = 8
-	MaxHistoryTurns   = 10
-	ConfirmDangerous  = true
+	MaxHistoryTurns  = 10
+	ConfirmDangerous = true
 )
 
 // ---------- 系统提示词 ----------
@@ -176,7 +175,7 @@ func runTool(hist *history.History, mgr *skills.Manager, id, name string, args m
 
 // ---------- 主循环 ----------
 
-func Run(cfg *config.Config, mgr *skills.Manager) int {
+func Run(cfg *config.Config, mgr *skills.Manager, limits *config.Limits) int {
 	ui.Banner("Devfox", "beta", "0.1", "终端 AI 助手 · 命令执行 / 文件操作 / 技能系统")
 	fmt.Println()
 
@@ -277,7 +276,11 @@ func Run(cfg *config.Config, mgr *skills.Manager) int {
 		finalReply := ""
 		done := false
 
-		for round := 0; round <= MaxToolRounds; round++ {
+		totalCalls := 0   // 总体工具调用计数
+		sameKey := ""     // 上次工具调用 key（名称+参数）
+		sameCount := 0    // 相同工具连续调用计数
+
+		for round := 0; round < limits.MaxToolRounds; round++ {
 			payload, err := llm.BuildPayload(cfg, mgr, hist, sys, tctx, input)
 			if err != nil {
 				finalReply = "✗ 请求体构建失败"
@@ -361,11 +364,6 @@ func Run(cfg *config.Config, mgr *skills.Manager) int {
 			}
 
 			if hasTools && len(toolCalls) > 0 {
-				if round >= MaxToolRounds {
-					finalReply = "工具调用轮数超过上限（8轮），已停止。请尝试拆分任务。"
-					done = true
-					break
-				}
 				fmt.Println()
 				ui.Puts(ui.ToolCall, "[工具]")
 				fmt.Printf(" 第 %d 轮调用\n", round+1)
@@ -385,7 +383,37 @@ func Run(cfg *config.Config, mgr *skills.Manager) int {
 							args = nil
 						}
 					}
+
+					// ---- 工具调用次数限制（可配置） ----
+					argsKey := ""
+					if args != nil {
+						if b, err := json.Marshal(args); err == nil {
+							argsKey = string(b)
+						}
+					}
+					totalCalls++
+					if totalCalls > limits.MaxToolCallsTotal {
+						finalReply = fmt.Sprintf("✗ 工具调用总次数超过上限（%d 次），已停止。请尝试拆分任务。", limits.MaxToolCallsTotal)
+						done = true
+						break
+					}
+					key := name + "\x00" + argsKey
+					if key == sameKey {
+						sameCount++
+					} else {
+						sameKey = key
+						sameCount = 1
+					}
+					if sameCount > limits.MaxSameToolCalls {
+						finalReply = fmt.Sprintf("✗ 连续 %d 次调用相同工具（%s，参数相同）仍未解决问题，已停止。请尝试其他思路。", limits.MaxSameToolCalls, name)
+						done = true
+						break
+					}
+
 					runTool(hist, mgr, id, name, args)
+				}
+				if done {
+					break
 				}
 				fmt.Println()
 				ui.Puts(ui.Dim, "继续处理...")
@@ -403,7 +431,7 @@ func Run(cfg *config.Config, mgr *skills.Manager) int {
 		}
 
 		if !done {
-			finalReply = "工具调用轮数超过上限（8轮），已停止。请尝试拆分任务。"
+			finalReply = fmt.Sprintf("✗ 工具调用轮数超过上限（%d 轮），已停止。请尝试拆分任务。", limits.MaxToolRounds)
 		}
 		fmt.Println()
 		ui.Puts(ui.AgentReply, "Agent > ")

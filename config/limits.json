@@ -1,0 +1,5 @@
+{
+  "max_tool_rounds": 64,
+  "max_tool_calls_total": 64,
+  "max_same_tool_calls": 4
+}
