@@ -39,6 +39,34 @@ func termWidth() int {
 	return int(ws.Col)
 }
 
+// ---------- 显示宽度（CJK 宽字符占 2 列） ----------
+
+func isCJK(r rune) bool {
+	return (r >= 0x1100 && r <= 0x115F) ||
+		(r >= 0x2E80 && r <= 0xA4CF) ||
+		(r >= 0xAC00 && r <= 0xD7A3) ||
+		(r >= 0xF900 && r <= 0xFAFF) ||
+		(r >= 0xFE30 && r <= 0xFE4F) ||
+		(r >= 0xFF00 && r <= 0xFF60) ||
+		(r >= 0xFFE0 && r <= 0xFFE6) ||
+		(r >= 0x20000 && r <= 0x2FFFD) ||
+		(r >= 0x30000 && r <= 0x3FFFD)
+}
+
+func displayWidth(rs []rune) int {
+	w := 0
+	for _, r := range rs {
+		if r < 0x80 {
+			w++
+		} else if isCJK(r) {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return w
+}
+
 // ---------- raw 模式（逐键读取，支持方向键） ----------
 
 type termios struct {
@@ -132,6 +160,7 @@ func getStdinReader() *bufio.Reader {
 
 // ReadLine 交互式行输入：上下边框（宽度自适应）、❯ 提示符、
 // @ 文件补全、/ 命令补全，上下键选择，回车确认。
+// 支持 ← → 光标移动、Home/End、退格/Delete 编辑。
 // 非 TTY 环境自动降级为普通行读取。
 // 返回 (输入内容, 是否被 Ctrl+C 中断)。
 func ReadLine(prompt string, complete Completer) (string, bool) {
@@ -155,6 +184,7 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 
 	reader := bufio.NewReader(os.Stdin)
 	inputRunes := []rune{}
+	cursor := 0 // 光标位置（rune 索引）
 	sel := -1
 	suppress := false // @ 选择后抑制立即再弹列表
 
@@ -217,6 +247,13 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 		} else {
 			fmt.Printf("\r\033[1A")
 		}
+		// 光标定位：后退到 cursor 位置（光标后字符的显示宽度）
+		if cursor < len(inputRunes) {
+			back := displayWidth(inputRunes[cursor:])
+			if back > 0 {
+				fmt.Printf("\033[%dD", back)
+			}
+		}
 	}
 
 	for {
@@ -233,6 +270,7 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 				if strings.HasPrefix(input, "@") {
 					// @ 模式：填入选中项，继续编辑
 					inputRunes = []rune("@" + items[sel].Value)
+					cursor = len(inputRunes)
 					suppress = true
 					sel = -1
 					continue
@@ -247,9 +285,10 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 			fmt.Print("\n\r\033[K\033[J")
 			return input, false
 
-		case 0x7f, 0x08: // Backspace
-			if len(inputRunes) > 0 {
-				inputRunes = inputRunes[:len(inputRunes)-1]
+		case 0x7f, 0x08: // Backspace：删除光标前字符
+			if cursor > 0 {
+				inputRunes = append(inputRunes[:cursor-1], inputRunes[cursor:]...)
+				cursor--
 				suppress = false
 				sel = -1
 			}
@@ -264,34 +303,65 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 			if err != nil {
 				continue
 			}
-			if b2 == '[' {
-				b3, err := reader.ReadByte()
-				if err != nil {
-					continue
+			if b2 != '[' {
+				continue
+			}
+			b3, err := reader.ReadByte()
+			if err != nil {
+				continue
+			}
+			switch b3 {
+			case 'A': // ↑
+				if active && len(items) > 0 {
+					if sel < 0 {
+						sel = 0
+					} else if sel > 0 {
+						sel--
+					}
 				}
+			case 'B': // ↓
+				if active && len(items) > 0 {
+					if sel < 0 {
+						sel = 0
+					} else if sel < len(items)-1 {
+						sel++
+					}
+				}
+			case 'C': // → 光标右移
+				if cursor < len(inputRunes) {
+					cursor++
+				}
+			case 'D': // ← 光标左移
+				if cursor > 0 {
+					cursor--
+				}
+			case 'H': // Home
+				cursor = 0
+			case 'F': // End
+				cursor = len(inputRunes)
+			case '1', '3', '4', '7', '8': // 带 ~ 的扩展键
+				_, _ = reader.ReadByte() // 吃掉 '~'
 				switch b3 {
-				case 'A': // ↑
-					if active && len(items) > 0 {
-						if sel < 0 {
-							sel = 0
-						} else if sel > 0 {
-							sel--
-						}
+				case '1': // Home
+					cursor = 0
+				case '3': // Delete：删除光标处字符
+					if cursor < len(inputRunes) {
+						inputRunes = append(inputRunes[:cursor], inputRunes[cursor+1:]...)
+						suppress = false
+						sel = -1
 					}
-				case 'B': // ↓
-					if active && len(items) > 0 {
-						if sel < 0 {
-							sel = 0
-						} else if sel < len(items)-1 {
-							sel++
-						}
-					}
+				case '4': // End
+					cursor = len(inputRunes)
 				}
 			}
 
 		default:
 			if ru >= 0x20 {
-				inputRunes = append(inputRunes, ru)
+				// 在光标位置插入
+				inputRunes = append(inputRunes, 0)
+				copy(inputRunes[cursor+1:], inputRunes[cursor:])
+				inputRunes[cursor] = ru
+				cursor++
 				suppress = false
 				sel = -1
 			}
