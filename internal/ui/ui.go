@@ -196,5 +196,5 @@ func (s *Spinner) Stop(final string) {
 	}
 	close(s.stop)
 	<-s.done
-	fmt.Printf("\r%s %s %s%s\n", styles[Cyan], "✓", final, Reset())
+	fmt.Printf("\r%s%s%s\n", styles[Cyan], final, Reset())
 }

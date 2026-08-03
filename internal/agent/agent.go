@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -198,10 +199,9 @@ func Run(cfg *config.Config, mgr *skills.Manager, limits *config.Limits) int {
 
 	hist := history.New(MaxHistoryTurns)
 
-	// Ctrl+C 优雅退出
+	// Ctrl+C 优雅退出（raw 模式下 Ctrl+C 作为 0x03 由 ReadLine 处理）
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGINT)
-	stopSpinner := make(chan struct{})
 	go func() {
 		<-sigCh
 		fmt.Println()
@@ -209,18 +209,51 @@ func Run(cfg *config.Config, mgr *skills.Manager, limits *config.Limits) int {
 		fmt.Println("再见！")
 		os.Exit(0)
 	}()
-	_ = stopSpinner
 
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	// @ 文件补全 + / 命令补全
+	complete := func(input string) ([]ui.Suggestion, bool) {
+		if strings.HasPrefix(input, "@") {
+			ents, err := os.ReadDir(".")
+			if err != nil {
+				return nil, false
+			}
+			var dirs, files []string
+			for _, e := range ents {
+				if e.IsDir() {
+					dirs = append(dirs, e.Name()+"/")
+				} else {
+					files = append(files, e.Name())
+				}
+			}
+			sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i]) < strings.ToLower(dirs[j]) })
+			sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i]) < strings.ToLower(files[j]) })
+			items := make([]ui.Suggestion, 0, len(dirs)+len(files))
+			for _, d := range dirs {
+				items = append(items, ui.Suggestion{Label: d, Value: d})
+			}
+			for _, f := range files {
+				items = append(items, ui.Suggestion{Label: f, Value: f})
+			}
+			return items, true
+		}
+		if strings.HasPrefix(input, "/") {
+			items := make([]ui.Suggestion, 0, len(commands.CmdTable))
+			for _, c := range commands.CmdTable {
+				items = append(items, ui.Suggestion{Label: c.Name, Value: c.Name, Desc: c.Desc})
+			}
+			return items, true
+		}
+		return nil, false
+	}
 
 	for {
-		fmt.Println()
-		ui.Puts(ui.Prompt, "你 > ")
-		if !scanner.Scan() {
+		input, interrupted := ui.ReadLine("❯ ", complete)
+		if interrupted {
+			fmt.Println()
+			ui.Puts(ui.AgentReply, "Agent > ")
+			fmt.Println("再见！")
 			break
 		}
-		input := strings.TrimRight(scanner.Text(), "\r\n")
 		if input == "" {
 			continue
 		}
