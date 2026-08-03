@@ -247,7 +247,7 @@ func Run(cfg *config.Config, mgr *skills.Manager, limits *config.Limits) int {
 	}
 
 	for {
-		input, interrupted := ui.ReadLine("❯ ", complete)
+		input, interrupted := ui.ReadLine("❯  ", complete)
 		if interrupted {
 			fmt.Println()
 			ui.Puts(ui.AgentReply, "Agent > ")
