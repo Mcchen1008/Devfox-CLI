@@ -210,19 +210,27 @@ func Run(cfg *config.Config, mgr *skills.Manager, limits *config.Limits) int {
 		os.Exit(0)
 	}()
 
-	// @ 文件补全 + / 命令补全
+	// @ 文件补全 + / 命令补全（支持前缀过滤）
 	complete := func(input string) ([]ui.Suggestion, bool) {
 		if strings.HasPrefix(input, "@") {
+			q := input[1:] // @ 后的过滤前缀，如 @bi → bin/
 			ents, err := os.ReadDir(".")
 			if err != nil {
 				return nil, false
 			}
 			var dirs, files []string
 			for _, e := range ents {
+				name := e.Name()
 				if e.IsDir() {
-					dirs = append(dirs, e.Name()+"/")
+					name += "/"
+				}
+				if q != "" && !strings.HasPrefix(name, q) {
+					continue
+				}
+				if e.IsDir() {
+					dirs = append(dirs, name)
 				} else {
-					files = append(files, e.Name())
+					files = append(files, name)
 				}
 			}
 			sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i]) < strings.ToLower(dirs[j]) })
@@ -237,8 +245,12 @@ func Run(cfg *config.Config, mgr *skills.Manager, limits *config.Limits) int {
 			return items, true
 		}
 		if strings.HasPrefix(input, "/") {
+			q := input[1:] // / 后的过滤前缀，如 /sk → /skills
 			items := make([]ui.Suggestion, 0, len(commands.CmdTable))
 			for _, c := range commands.CmdTable {
+				if q != "" && !strings.HasPrefix(c.Name, "/"+q) {
+					continue
+				}
 				items = append(items, ui.Suggestion{Label: c.Name, Value: c.Name, Desc: c.Desc})
 			}
 			return items, true

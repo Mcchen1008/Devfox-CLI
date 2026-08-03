@@ -99,7 +99,10 @@ func enableRaw() {
 	raw.Cc[syscall.VTIME] = 0
 	syscall.Syscall(syscall.SYS_IOCTL, os.Stdin.Fd(),
 		syscall.TCSETS, uintptr(unsafe.Pointer(&raw)))
+	// 竖线光标
+	fmt.Print("\033[6 q")
 	restoreRaw = func() {
+		fmt.Print("\033[0 q")
 		syscall.Syscall(syscall.SYS_IOCTL, os.Stdin.Fd(),
 			syscall.TCSETS, uintptr(unsafe.Pointer(&old)))
 	}
@@ -158,11 +161,11 @@ func getStdinReader() *bufio.Reader {
 
 // ---------- 主入口 ----------
 
-// ReadLine 交互式行输入：上下边框（宽度自适应）、❯ 提示符、
-// @ 文件补全、/ 命令补全，上下键选择，回车确认。
-// 支持 ← → 光标移动、Home/End、退格/Delete 编辑。
+// ReadLine 交互式行输入：圆角边框（宽度自适应）+ 品牌标题 + ❯ 提示符、
+// @ 文件补全、/ 命令补全，↑↓ 选择、Tab 补全、回车确认。
+// 支持 ← → 光标移动、Home/End、退格/Delete 编辑、Ctrl+C/D 退出。
 // 非 TTY 环境自动降级为普通行读取。
-// 返回 (输入内容, 是否被 Ctrl+C 中断)。
+// 返回 (输入内容, 是否被中断)。
 func ReadLine(prompt string, complete Completer) (string, bool) {
 	// 降级模式：管道/重定向时逐行读取
 	if !isTTY(os.Stdin) || !isTTY(os.Stdout) {
@@ -174,19 +177,26 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 	defer disableRaw()
 
 	w := termWidth()
-	if w < 10 {
-		w = 10
+	if w < 20 {
+		w = 20
 	}
-	border := strings.Repeat("─", w)
 
-	fmt.Println(border)
-	fmt.Print(prompt)
+	// 圆角边框：╭─ Devfox ─...─╮ / ╰─...─╯（青色主题）
+	borderColor := styles[Cyan]
+	top := "╭─ Devfox " + strings.Repeat("─", w-12) + "╮"
+	bottom := "╰" + strings.Repeat("─", w-2) + "╯"
+	borderTop := borderColor + top + Reset()
+	borderBottom := borderColor + bottom + Reset()
+	promptStyled := styles[BrightCyan] + prompt + Reset()
+
+	fmt.Println(borderTop)
+	fmt.Print(promptStyled)
 
 	reader := bufio.NewReader(os.Stdin)
 	inputRunes := []rune{}
-	cursor := 0 // 光标位置（rune 索引）
+	cursor := 0
 	sel := -1
-	suppress := false // @ 选择后抑制立即再弹列表
+	suppress := false
 
 	var items []Suggestion
 	active := false
@@ -205,10 +215,10 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 		input := string(inputRunes)
 		// 清输入行并重画
 		fmt.Print("\r\033[K")
-		fmt.Print(prompt + input)
-		// 换到边框行并重画下边框
+		fmt.Print(promptStyled + input)
+		// 下边框
 		fmt.Print("\n\r\033[K")
-		fmt.Print(border)
+		fmt.Print(borderBottom)
 		// 补全列表
 		items, active = completeAt(input)
 		shown := 0
@@ -225,29 +235,41 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 			for i := start; i < end; i++ {
 				shown++
 				it := items[i]
+				isDir := strings.HasSuffix(it.Label, "/")
 				fmt.Print("\n\r\033[K")
 				if i == sel {
-					fmt.Print("\033[7m " + it.Label)
+					fmt.Print("\033[7m ▸ " + it.Label)
 					if it.Desc != "" {
 						fmt.Print("  " + it.Desc)
 					}
 					fmt.Print(" \033[0m")
 				} else {
-					fmt.Print(" " + it.Label)
-					if it.Desc != "" {
-						fmt.Print("  " + it.Desc)
+					switch {
+					case isDir:
+						fmt.Print(styles[Cyan] + "  " + it.Label + Reset())
+					case it.Desc != "":
+						fmt.Print(styles[BrightCyan] + "  " + it.Label + Reset())
+						fmt.Print(styles[Gray] + "  " + it.Desc + Reset())
+					default:
+						fmt.Print("  " + it.Label)
 					}
 				}
 			}
+			// 滚动指示
+			if end < len(items) {
+				shown++
+				fmt.Print("\n\r\033[K")
+				fmt.Print(styles[Gray] + fmt.Sprintf("  ... 共 %d 个候选（↑↓ 继续浏览）", len(items)) + Reset())
+			}
 		}
-		fmt.Print("\033[J") // 清掉残留
-		// 光标回到输入行（上移 下边框1行 + 列表shown行）
+		fmt.Print("\033[J")
+		// 光标回输入行
 		if shown > 0 {
 			fmt.Printf("\r\033[%dA", shown+1)
 		} else {
 			fmt.Printf("\r\033[1A")
 		}
-		// 光标定位：后退到 cursor 位置（光标后字符的显示宽度）
+		// 光标定位
 		if cursor < len(inputRunes) {
 			back := displayWidth(inputRunes[cursor:])
 			if back > 0 {
@@ -260,7 +282,9 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 		redraw()
 		ru, err := readRune(reader)
 		if err != nil {
-			return string(inputRunes), false
+			// EOF（如 Ctrl+D 在部分终端）：中断退出
+			fmt.Print("\n\r\033[K\033[J")
+			return "", true
 		}
 
 		switch ru {
@@ -281,11 +305,28 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 					input = string(inputRunes)
 				}
 			}
-			// 结束输入：清掉边框与列表
 			fmt.Print("\n\r\033[K\033[J")
 			return input, false
 
-		case 0x7f, 0x08: // Backspace：删除光标前字符
+		case '\t': // Tab 一键补全（填入选中项，继续编辑）
+			if active && len(items) > 0 {
+				idx := sel
+				if idx < 0 {
+					idx = 0
+				}
+				if strings.HasPrefix(string(inputRunes), "@") {
+					inputRunes = []rune("@" + items[idx].Value)
+				} else if strings.HasPrefix(string(inputRunes), "/") {
+					inputRunes = []rune(items[idx].Value)
+				} else {
+					break
+				}
+				cursor = len(inputRunes)
+				suppress = true
+				sel = -1
+			}
+
+		case 0x7f, 0x08: // Backspace
 			if cursor > 0 {
 				inputRunes = append(inputRunes[:cursor-1], inputRunes[cursor:]...)
 				cursor--
@@ -293,7 +334,7 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 				sel = -1
 			}
 
-		case 0x03: // Ctrl+C
+		case 0x03, 0x04: // Ctrl+C / Ctrl+D
 			fmt.Print("^C\n")
 			fmt.Print("\r\033[K\033[J")
 			return "", true
@@ -327,11 +368,11 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 						sel++
 					}
 				}
-			case 'C': // → 光标右移
+			case 'C': // →
 				if cursor < len(inputRunes) {
 					cursor++
 				}
-			case 'D': // ← 光标左移
+			case 'D': // ←
 				if cursor > 0 {
 					cursor--
 				}
@@ -339,25 +380,24 @@ func ReadLine(prompt string, complete Completer) (string, bool) {
 				cursor = 0
 			case 'F': // End
 				cursor = len(inputRunes)
-			case '1', '3', '4', '7', '8': // 带 ~ 的扩展键
+			case '1', '3', '4', '7', '8':
 				_, _ = reader.ReadByte() // 吃掉 '~'
 				switch b3 {
-				case '1': // Home
+				case '1':
 					cursor = 0
-				case '3': // Delete：删除光标处字符
+				case '3':
 					if cursor < len(inputRunes) {
 						inputRunes = append(inputRunes[:cursor], inputRunes[cursor+1:]...)
 						suppress = false
 						sel = -1
 					}
-				case '4': // End
+				case '4':
 					cursor = len(inputRunes)
 				}
 			}
 
 		default:
 			if ru >= 0x20 {
-				// 在光标位置插入
 				inputRunes = append(inputRunes, 0)
 				copy(inputRunes[cursor+1:], inputRunes[cursor:])
 				inputRunes[cursor] = ru
