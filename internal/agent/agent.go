@@ -74,6 +74,8 @@ const promptTail = `
 - 优先使用工具获取真实信息，不要臆测
 - 如果工具返回错误，分析原因并尝试修正
 - 遇到不确定的情况，如实告知用户
+- 如果用户输入无法理解或找不到对应命令/文件/工具，**直接向用户提问澄清意图**，不要反复尝试搜索或执行无关命令（最多尝试 1-2 次即可）
+- 始终使用中文回复用户
 `
 
 func buildSystemPrompt(mgr *skills.Manager) string {
@@ -423,6 +425,9 @@ func Run(cfg *config.Config, mgr *skills.Manager, limits *config.Limits) int {
 
 			if m.Content != "" {
 				finalReply = m.Content
+			} else if reasoning != "" {
+				// content 为空时用思考内容兜底，避免空白回复
+				finalReply = "（模型未生成文字回复，以下是其思考过程）\n" + reasoning
 			} else {
 				finalReply = "（任务已完成，无文字回复）"
 			}
