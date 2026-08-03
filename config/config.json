@@ -1,0 +1,13 @@
+{
+  "devfox": {
+    "base_url": "https://api.agnes-ai.cn/v1",
+    "model_name": "agnes-2.5-flash",
+    "api_key": "sk-请用环境变量DEVFOX_API_KEY注入",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "timeout": 120,
+    "enable_thinking": true,
+    "thinking_budget": 2048,
+    "max_retries": 3
+  }
+}

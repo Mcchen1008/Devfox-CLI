@@ -1,0 +1,14 @@
+# 编译产物
+/bin/
+*.exe
+
+# 测试产物
+*.test
+*.out
+
+# 环境配置
+.env
+
+# 编辑器
+.idea/
+.vscode/
