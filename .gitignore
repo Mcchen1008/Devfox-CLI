@@ -1,10 +1,24 @@
 # 编译产物
 /bin/
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
 # 测试产物
 *.test
 *.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# 依赖目录
+vendor/
+
+# Go workspace
+go.work
+go.work.sum
 
 # 环境配置
 .env
