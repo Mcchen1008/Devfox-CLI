@@ -1,0 +1,176 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 版本号（例如 v0.2.0，会作为 git tag 与 Release 名称）
+        required: true
+        type: string
+      prerelease:
+        description: 是否为预览版（prerelease）
+        required: false
+        default: false
+        type: boolean
+      description:
+        description: 发行版简介（写入 Release 正文）
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.24"
+  BINARY_NAME: devfox
+  PACKAGE_NAME: devfox-go
+
+jobs:
+  build:
+    name: Build (linux / ${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            arch_label: x64
+          - goarch: "386"
+            arch_label: x86-32
+          - goarch: arm64
+            arch_label: armv8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p artifacts
+          output="artifacts/${{ env.BINARY_NAME }}-linux-${{ matrix.goarch }}"
+          go build -trimpath -ldflags="-s -w" -o "$output" ./...
+          file "$output"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-linux-${{ matrix.goarch }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Package & Publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries/
+          pattern: binary-linux-*
+          merge-multiple: false
+
+      - name: Stage release package
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          # 去掉前导 v，用于目录命名
+          VERSION_NUM="${VERSION#v}"
+          STAGE_DIR="${{ env.PACKAGE_NAME }}-${VERSION_NUM}"
+          mkdir -p "$STAGE_DIR/bin"
+          mkdir -p "$STAGE_DIR/src"
+
+          # 1) 源代码
+          git archive --format=tar HEAD | tar -x -C "$STAGE_DIR/src"
+
+          # 2) 三个编译好的二进制
+          for arch in amd64 386 arm64; do
+            src="binaries/binary-linux-${arch}/${{ env.BINARY_NAME }}-linux-${arch}"
+            test -f "$src"
+            cp "$src" "$STAGE_DIR/bin/${{ env.BINARY_NAME }}-linux-${arch}"
+          done
+          chmod +x "$STAGE_DIR/bin/"*
+
+          # 3) 必要运行时组件：config / skills（main.go 期望 ../config 与 ../skills 相对二进制）
+          cp -r config "$STAGE_DIR/config"
+          cp -r skills "$STAGE_DIR/skills"
+
+          # 4) 文档
+          cp README.md LICENSE "$STAGE_DIR/"
+
+          # 5) 写入打包清单
+          {
+            echo "# ${{ env.PACKAGE_NAME }} ${VERSION}"
+            echo ""
+            echo "${{ inputs.description }}"
+            echo ""
+            echo "## 目录结构"
+            echo "- \`src/\` 源代码"
+            echo "- \`bin/\` 预编译二进制（linux amd64 / 386 / arm64）"
+            echo "- \`config/\` 运行时配置（config.json、limits.json）"
+            echo "- \`skills/\` 技能目录"
+            echo "- \`README.md\` / \`LICENSE\`"
+            echo ""
+            echo "## 运行"
+            echo '```bash'
+            echo "cd bin"
+            echo "./${{ env.BINARY_NAME }}-linux-amd64   # x86_64"
+            echo "./${{ env.BINARY_NAME }}-linux-386     # x86 32 位"
+            echo "./${{ env.BINARY_NAME }}-linux-arm64   # armv8"
+            echo '```'
+          } > "$STAGE_DIR/RELEASE.md"
+
+          # 6) 打包为 tar.gz
+          ARCHIVE="${{ env.PACKAGE_NAME }}-${VERSION_NUM}-linux-all.tar.gz"
+          tar -czf "$ARCHIVE" "$STAGE_DIR"
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+
+          echo "archive_path=$ARCHIVE" >> "$GITHUB_ENV"
+          echo "stage_dir=$STAGE_DIR" >> "$GITHUB_ENV"
+
+      - name: Create tag
+        run: |
+          git tag "${{ inputs.version }}" 2>/dev/null || true
+          git push origin "${{ inputs.version }}" 2>/dev/null || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: ${{ inputs.version }}
+          body: |
+            ${{ inputs.description }}
+
+            ## 包含内容
+            - 源代码（`src/`）
+            - 预编译二进制：
+              - `bin/${{ env.BINARY_NAME }}-linux-amd64`（linux x64）
+              - `bin/${{ env.BINARY_NAME }}-linux-386`（linux x86-32）
+              - `bin/${{ env.BINARY_NAME }}-linux-arm64`（linux armv8）
+            - 必要运行时组件：`config/`、`skills/`
+            - `README.md`、`LICENSE`、`RELEASE.md`
+
+            下载下方 `${{ env.archive_path }}` 解压后即可运行。
+          prerelease: ${{ inputs.prerelease }}
+          files: |
+            ${{ env.archive_path }}
+            ${{ env.archive_path }}.sha256
