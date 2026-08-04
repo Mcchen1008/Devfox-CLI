@@ -57,7 +57,7 @@ jobs:
         run: |
           mkdir -p artifacts
           output="artifacts/${{ env.BINARY_NAME }}-linux-${{ matrix.goarch }}"
-          go build -trimpath -ldflags="-s -w" -o "$output" ./...
+          go build -trimpath -ldflags="-s -w" -o "$output" .
           file "$output"
 
       - name: Upload artifact
