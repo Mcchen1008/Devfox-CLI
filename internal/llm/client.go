@@ -151,7 +151,7 @@ func postOnce(cfg *config.Config, url string, payload []byte) (string, int, erro
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	req.Header.Set("User-Agent", "devfox-go/beta-0.1")
+	req.Header.Set("User-Agent", "devfox-go/beta-0.2")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

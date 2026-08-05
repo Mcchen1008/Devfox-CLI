@@ -176,7 +176,7 @@ func runTool(hist *history.History, mgr *skills.Manager, id, name string, args m
 // ---------- 主循环 ----------
 
 func Run(cfg *config.Config, mgr *skills.Manager, limits *config.Limits) int {
-	ui.Banner("Devfox", "beta", "0.1", "终端 AI 助手 · 命令执行 / 文件操作 / 技能系统")
+	ui.Banner("Devfox", "beta", "0.2", "终端 AI 助手 · 命令执行 / 文件操作 / 技能系统")
 	fmt.Println()
 
 	if len(mgr.Items) > 0 {

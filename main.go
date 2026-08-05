@@ -13,7 +13,7 @@ import (
 
 const (
 	Name    = "Devfox"
-	Version = "0.1"
+	Version = "0.2"
 	Release = "beta"
 	Tagline = "终端 AI 助手 · 命令执行 / 文件操作 / 技能系统"
 	UA      = "devfox-go/" + Release + "-" + Version
