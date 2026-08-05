@@ -128,6 +128,19 @@ func Append(sb *strings.Builder, s Style, text string) {
 	}
 }
 
+// Truncate 按 rune 安全截断字符串（避免切断 UTF-8 多字节字符），
+// 超长时在末尾追加省略号。n<=0 时原样返回。
+func Truncate(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "..."
+}
+
 func Rule() {
 	Puts(Dim, "────────────────────────────────────────────────────────────")
 	fmt.Println()

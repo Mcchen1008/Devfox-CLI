@@ -71,15 +71,15 @@ func Load(path string) (*Config, error) {
 
 	var raw struct {
 		Devfox struct {
-			BaseURL        string  `json:"base_url"`
-			ModelName      string  `json:"model_name"`
-			APIKey         string  `json:"api_key"`
-			Temperature    float64 `json:"temperature"`
-			MaxTokens      int     `json:"max_tokens"`
-			Timeout        int     `json:"timeout"`
-			EnableThinking bool    `json:"enable_thinking"`
-			ThinkingBudget int     `json:"thinking_budget"`
-			MaxRetries     int     `json:"max_retries"`
+			BaseURL        string   `json:"base_url"`
+			ModelName      string   `json:"model_name"`
+			APIKey         string   `json:"api_key"`
+			Temperature    *float64 `json:"temperature"`
+			MaxTokens      *int     `json:"max_tokens"`
+			Timeout        *int     `json:"timeout"`
+			EnableThinking bool     `json:"enable_thinking"`
+			ThinkingBudget *int     `json:"thinking_budget"`
+			MaxRetries     *int     `json:"max_retries"`
 		} `json:"devfox"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -94,21 +94,21 @@ func Load(path string) (*Config, error) {
 	cfg.BaseURL = d.BaseURL
 	cfg.ModelName = d.ModelName
 	cfg.APIKey = d.APIKey
-	if d.Temperature != 0 {
-		cfg.Temperature = d.Temperature
+	if d.Temperature != nil {
+		cfg.Temperature = *d.Temperature
 	}
-	if d.MaxTokens != 0 {
-		cfg.MaxTokens = d.MaxTokens
+	if d.MaxTokens != nil {
+		cfg.MaxTokens = *d.MaxTokens
 	}
-	if d.Timeout != 0 {
-		cfg.Timeout = d.Timeout
+	if d.Timeout != nil {
+		cfg.Timeout = *d.Timeout
 	}
 	cfg.EnableThinking = d.EnableThinking
-	if d.ThinkingBudget != 0 {
-		cfg.ThinkingBudget = d.ThinkingBudget
+	if d.ThinkingBudget != nil {
+		cfg.ThinkingBudget = *d.ThinkingBudget
 	}
-	if d.MaxRetries != 0 {
-		cfg.MaxRetries = d.MaxRetries
+	if d.MaxRetries != nil {
+		cfg.MaxRetries = *d.MaxRetries
 	}
 
 	// 环境变量覆盖（优先级最高）

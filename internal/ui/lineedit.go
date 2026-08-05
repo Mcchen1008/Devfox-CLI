@@ -159,6 +159,17 @@ func getStdinReader() *bufio.Reader {
 	return stdinReader
 }
 
+// ReadStdinLine 从共享的 stdin 读取器读取一行（与 ReadLine 降级模式共用缓冲区）。
+// 返回 (内容, 是否 EOF)。所有需要读 stdin 的交互流程都应走这里，
+// 避免多个 bufio.Reader 实例互相预读导致管道/重定向输入丢失。
+func ReadStdinLine() (string, bool) {
+	line, err := getStdinReader().ReadString('\n')
+	if err != nil && line == "" {
+		return "", true // EOF
+	}
+	return strings.TrimRight(line, "\r\n"), false
+}
+
 // ---------- 主入口 ----------
 
 // ReadLine 交互式行输入：圆角边框（宽度自适应）+ 品牌标题 + ❯ 提示符、
@@ -169,8 +180,8 @@ func getStdinReader() *bufio.Reader {
 func ReadLine(prompt string, complete Completer) (string, bool) {
 	// 降级模式：管道/重定向时逐行读取
 	if !isTTY(os.Stdin) || !isTTY(os.Stdout) {
-		line, _ := getStdinReader().ReadString('\n')
-		return strings.TrimRight(line, "\r\n"), false
+		line, eof := ReadStdinLine()
+		return line, eof
 	}
 
 	enableRaw()

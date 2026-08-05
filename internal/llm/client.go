@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -134,9 +135,17 @@ func Chat(cfg *config.Config, payload []byte) (string, error) {
 	return "", fmt.Errorf("重试次数耗尽: %v", lastErr)
 }
 
+// httpClient 复用连接池，避免每轮请求重建 TCP 连接
+var httpClient = &http.Client{}
+
+// maxResponseSize 响应体大小上限（10MB），防止异常超大响应撑爆内存
+const maxResponseSize = 10 << 20
+
 func postOnce(cfg *config.Config, url string, payload []byte) (string, int, error) {
-	client := &http.Client{Timeout: time.Duration(cfg.Timeout) * time.Second}
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Timeout)*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return "", 0, err
 	}
@@ -144,15 +153,18 @@ func postOnce(cfg *config.Config, url string, payload []byte) (string, int, erro
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	req.Header.Set("User-Agent", "devfox-go/beta-0.1")
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", 0, fmt.Errorf("网络错误: %v", err)
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
 		return "", resp.StatusCode, fmt.Errorf("读取响应失败: %v", err)
+	}
+	if len(data) > maxResponseSize {
+		return "", resp.StatusCode, fmt.Errorf("响应体过大（超过 %d 字节）", maxResponseSize)
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,6 +21,9 @@ import (
 const (
 	MaxHistoryTurns  = 10
 	ConfirmDangerous = true
+	// MaxHistToolResult 入历史前截断工具结果的大小上限（8KB）。
+	// 防止多轮工具调用把完整结果（最大 200KB）累积进 payload 导致请求膨胀。
+	MaxHistToolResult = 8 * 1024
 )
 
 // ---------- 系统提示词 ----------
@@ -97,9 +99,8 @@ func confirmDangerousCmd(cmd string) bool {
 	ui.Puts(ui.Bold, pat)
 	fmt.Println()
 	fmt.Print("确认执行吗？(yes/no): ")
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil {
+	line, eof := ui.ReadStdinLine()
+	if eof {
 		return false
 	}
 	line = strings.TrimSpace(line)
@@ -118,12 +119,15 @@ func runTool(hist *history.History, mgr *skills.Manager, id, name string, args m
 	fmt.Print(": ")
 	ui.Puts(ui.Bold, name)
 	fmt.Println()
-	for k, v := range args {
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := args[k]
 		disp, _ := json.Marshal(v)
-		s := string(disp)
-		if len(s) > 100 {
-			s = s[:100] + "..."
-		}
+		s := ui.Truncate(string(disp), 100)
 		fmt.Print("    ")
 		ui.Puts(ui.Gray, k)
 		fmt.Print(": ")
@@ -150,11 +154,7 @@ func runTool(hist *history.History, mgr *skills.Manager, id, name string, args m
 		result = fmt.Sprintf("✗ 未知工具: %s", name)
 	}
 
-	rl := len(result)
-	brief := result
-	if rl > 200 {
-		brief = result[:200]
-	}
+	brief := ui.Truncate(result, 200)
 	fmt.Print("  ")
 	ui.Puts(ui.ToolResult, "<- 结果")
 	fmt.Print(": ")
@@ -168,12 +168,9 @@ func runTool(hist *history.History, mgr *skills.Manager, id, name string, args m
 		st = ui.Warn
 	}
 	ui.Puts(st, brief)
-	if rl > 200 {
-		fmt.Print("...")
-	}
 	fmt.Println()
 
-	hist.Add("tool", result, id, "")
+	hist.Add("tool", ui.Truncate(result, MaxHistToolResult), id, "")
 }
 
 // ---------- 主循环 ----------
@@ -378,23 +375,22 @@ func Run(cfg *config.Config, mgr *skills.Manager, limits *config.Limits) int {
 				reasoning = m.Reasoning
 			}
 			if reasoning != "" {
-				brief := reasoning
-				if len(brief) > 300 {
-					brief = brief[:300]
-				}
+				brief := ui.Truncate(reasoning, 300)
 				fmt.Println()
 				ui.Puts(ui.Thinking, "思考:")
 				fmt.Print(" ")
 				ui.Puts(ui.Thinking, brief)
-				if len(reasoning) > 300 {
-					fmt.Print("...")
-				}
 				fmt.Println()
 			}
 
-			// 保存 assistant 原始消息（含 tool_calls）用于回传
-			rawMsg, _ := json.Marshal(m)
-			hist.Add("assistant", m.Content, "", string(rawMsg))
+			// 保存 assistant 消息用于回传：仅保留 tool_calls。
+			// 完整 message 里含 reasoning_content/reasoning 等扩展字段，
+			// 直接回传给 OpenAI 兼容 API 可能被拒绝，故过滤掉。
+			rawTools := ""
+			if len(m.ToolCalls) > 0 {
+				rawTools = string(m.ToolCalls)
+			}
+			hist.Add("assistant", m.Content, "", rawTools)
 
 			var toolCalls []struct {
 				ID       string `json:"id"`

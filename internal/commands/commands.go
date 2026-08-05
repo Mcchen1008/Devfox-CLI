@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -82,12 +81,11 @@ func ExpandMentions(text string) (string, []string) {
 
 func readlineTrimmed(prompt string) string {
 	fmt.Print(prompt)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil && line == "" {
+	line, eof := ui.ReadStdinLine()
+	if eof {
 		return ""
 	}
-	return strings.TrimRight(line, "\r\n")
+	return line
 }
 
 func validSkillName(name string) bool {
@@ -127,9 +125,6 @@ func addSkillInteractive(mgr *skills.Manager) string {
 	var body strings.Builder
 	for {
 		line := readlineTrimmed("  > ")
-		if line == "" && body.Len() == 0 {
-			// 允许空行，但需要 END 结束
-		}
 		if line == "END" {
 			break
 		}
@@ -284,14 +279,7 @@ func cmdHistory(mgr *skills.Manager, hist *history.History, cfg *config.Config, 
 		ui.Append(&sb, ui.Cyan, fmt.Sprintf("%d", idx))
 		sb.WriteString(". ")
 		content := msgs[i].Content
-		brief := content
-		if len(brief) > 60 {
-			brief = brief[:60]
-		}
-		ui.Append(&sb, ui.Gray, brief)
-		if len(content) > 60 {
-			sb.WriteString("...")
-		}
+		ui.Append(&sb, ui.Gray, ui.Truncate(content, 60))
 		sb.WriteString("\n")
 		idx++
 	}

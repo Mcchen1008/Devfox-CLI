@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Mcchen1008/devfox-go/internal/ui"
 )
 
 // 工具结果截断保护：防止超大输出撑爆 API 请求
@@ -24,10 +26,7 @@ type ToolDef struct {
 }
 
 func truncateResult(s string) string {
-	if len(s) <= MaxToolResult {
-		return s
-	}
-	return s[:MaxToolResult] + fmt.Sprintf("\n...（输出过长，已截断至 %d 字节）", MaxToolResult)
+	return ui.Truncate(s, MaxToolResult)
 }
 
 // ==================== 危险命令检测 ====================
@@ -43,11 +42,14 @@ var dangerousPatterns = []string{
 	"halt",
 	"> /dev/sda",
 	"chmod -R 777 /",
-	"curl.*|.*sh",
-	"wget.*|.*sh",
 	"git push --force",
 	"drop table",
 	"drop database",
+	// 管道到 shell 执行（如 curl xxx | sh 下载即执行）
+	"| sh",
+	"| bash",
+	"| zsh",
+	"| sudo sh",
 }
 
 // IsDangerous 返回命中的危险模式；安全返回空串
@@ -157,6 +159,9 @@ func toolExecuteCommand(args map[string]any) string {
 			code = ee.ExitCode()
 		}
 		if code == -1 {
+			if len(out) > 0 {
+				return truncateResult(fmt.Sprintf("✗ 命令执行失败:\n%s", string(out)))
+			}
 			return "✗ 命令执行失败"
 		}
 		return truncateResult(fmt.Sprintf("✗ 命令执行失败 (退出码: %d):\n%s", code, string(out)))
@@ -240,7 +245,7 @@ func toolWriteFile(args map[string]any) string {
 	if path == "" {
 		return "✗ 缺少参数: file_path"
 	}
-	if getStr(args, "content") == "" && args["content"] == nil {
+	if _, ok := args["content"]; !ok {
 		return "✗ 缺少参数: content"
 	}
 
