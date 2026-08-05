@@ -89,63 +89,74 @@ jobs:
           pattern: binary-linux-*
           merge-multiple: false
 
-      - name: Stage release package
+      # 按架构分别打包：3 个架构 zip + 1 个源代码 zip
+      - name: Stage & package per-arch zips
+        shell: bash
         run: |
           set -euo pipefail
           VERSION="${{ inputs.version }}"
-          # 去掉前导 v，用于目录命名
           VERSION_NUM="${VERSION#v}"
-          STAGE_DIR="${{ env.PACKAGE_NAME }}-${VERSION_NUM}"
-          mkdir -p "$STAGE_DIR/bin"
-          mkdir -p "$STAGE_DIR/src"
 
-          # 1) 源代码
-          git archive --format=tar HEAD | tar -x -C "$STAGE_DIR/src"
-
-          # 2) 三个编译好的二进制
+          # ---------- 1) 三个架构各自的独立 zip ----------
           for arch in amd64 386 arm64; do
-            src="binaries/binary-linux-${arch}/${{ env.BINARY_NAME }}-linux-${arch}"
-            test -f "$src"
-            cp "$src" "$STAGE_DIR/bin/${{ env.BINARY_NAME }}-linux-${arch}"
+            ARCH_DIR="${PACKAGE_NAME}-${VERSION_NUM}-linux-${arch}"
+            mkdir -p "$ARCH_DIR/bin"
+
+            # 二进制
+            cp "binaries/binary-linux-${arch}/${BINARY_NAME}-linux-${arch}" \
+               "$ARCH_DIR/bin/${BINARY_NAME}"
+            chmod +x "$ARCH_DIR/bin/${BINARY_NAME}"
+
+            # 必要运行时组件：config / skills（main.go 期望 ../config 与 ../skills 相对二进制）
+            cp -r config "$ARCH_DIR/config"
+            cp -r skills "$ARCH_DIR/skills"
+
+            # 文档
+            cp README.md LICENSE "$ARCH_DIR/"
+
+            # 该架构的说明文件
+            {
+              echo "# ${PACKAGE_NAME} ${VERSION} (linux ${arch})"
+              echo ""
+              echo "${{ inputs.description }}"
+              echo ""
+              echo "## 目录结构"
+              echo "- \`bin/${BINARY_NAME}\` 预编译二进制（linux ${arch}）"
+              echo "- \`config/\` 运行时配置（config.json、limits.json）"
+              echo "- \`skills/\` 技能目录"
+              echo "- \`README.md\` / \`LICENSE\`"
+              echo ""
+              echo "## 运行"
+              echo '```bash'
+              echo "cd bin"
+              echo "./${BINARY_NAME}"
+              echo '```'
+              echo ""
+              echo "## 校验"
+              echo '```bash'
+              echo "sha256sum -c ${PACKAGE_NAME}-${VERSION_NUM}-linux-${arch}.zip.sha256"
+              echo '```'
+            } > "$ARCH_DIR/README.md"
+
+            # 打包 zip（用 zip 命令：保留 Unix 可执行权限位，
+            # 避免 Python zipfile 解压后二进制失去 x 权限）
+            zip -q -r "${PACKAGE_NAME}-${VERSION_NUM}-linux-${arch}.zip" "$ARCH_DIR"
+            sha256sum "${PACKAGE_NAME}-${VERSION_NUM}-linux-${arch}.zip" > \
+              "${PACKAGE_NAME}-${VERSION_NUM}-linux-${arch}.zip.sha256"
           done
-          chmod +x "$STAGE_DIR/bin/"*
 
-          # 3) 必要运行时组件：config / skills（main.go 期望 ../config 与 ../skills 相对二进制）
-          cp -r config "$STAGE_DIR/config"
-          cp -r skills "$STAGE_DIR/skills"
+          # ---------- 2) 源代码 zip（git archive 直接输出 zip 格式） ----------
+          git archive \
+            --format=zip \
+            --prefix="${PACKAGE_NAME}-${VERSION_NUM}-src/" \
+            -o "${PACKAGE_NAME}-${VERSION_NUM}-src.zip" \
+            HEAD
+          sha256sum "${PACKAGE_NAME}-${VERSION_NUM}-src.zip" > \
+            "${PACKAGE_NAME}-${VERSION_NUM}-src.zip.sha256"
 
-          # 4) 文档
-          cp README.md LICENSE "$STAGE_DIR/"
-
-          # 5) 写入打包清单
-          {
-            echo "# ${{ env.PACKAGE_NAME }} ${VERSION}"
-            echo ""
-            echo "${{ inputs.description }}"
-            echo ""
-            echo "## 目录结构"
-            echo "- \`src/\` 源代码"
-            echo "- \`bin/\` 预编译二进制（linux amd64 / 386 / arm64）"
-            echo "- \`config/\` 运行时配置（config.json、limits.json）"
-            echo "- \`skills/\` 技能目录"
-            echo "- \`README.md\` / \`LICENSE\`"
-            echo ""
-            echo "## 运行"
-            echo '```bash'
-            echo "cd bin"
-            echo "./${{ env.BINARY_NAME }}-linux-amd64   # x86_64"
-            echo "./${{ env.BINARY_NAME }}-linux-386     # x86 32 位"
-            echo "./${{ env.BINARY_NAME }}-linux-arm64   # armv8"
-            echo '```'
-          } > "$STAGE_DIR/RELEASE.md"
-
-          # 6) 打包为 tar.gz
-          ARCHIVE="${{ env.PACKAGE_NAME }}-${VERSION_NUM}-linux-all.tar.gz"
-          tar -czf "$ARCHIVE" "$STAGE_DIR"
-          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
-
-          echo "archive_path=$ARCHIVE" >> "$GITHUB_ENV"
-          echo "stage_dir=$STAGE_DIR" >> "$GITHUB_ENV"
+          # 列出产物，供后续步骤引用
+          ls -lh *.zip *.sha256
+          echo "archive_prefix=${PACKAGE_NAME}-${VERSION_NUM}" >> "$GITHUB_ENV"
 
       - name: Create tag
         run: |
@@ -160,17 +171,32 @@ jobs:
           body: |
             ${{ inputs.description }}
 
-            ## 包含内容
-            - 源代码（`src/`）
-            - 预编译二进制：
-              - `bin/${{ env.BINARY_NAME }}-linux-amd64`（linux x64）
-              - `bin/${{ env.BINARY_NAME }}-linux-386`（linux x86-32）
-              - `bin/${{ env.BINARY_NAME }}-linux-arm64`（linux armv8）
-            - 必要运行时组件：`config/`、`skills/`
-            - `README.md`、`LICENSE`、`RELEASE.md`
+            ## 下载
 
-            下载下方 `${{ env.archive_path }}` 解压后即可运行。
+            本发行版包含 4 个 zip 压缩包：
+
+            ### 预编译二进制（3 个架构包）
+            - `${{ env.archive_prefix }}-linux-amd64.zip` — linux x64
+            - `${{ env.archive_prefix }}-linux-386.zip` — linux x86-32
+            - `${{ env.archive_prefix }}-linux-arm64.zip` — linux armv8
+
+            每个架构包内均含：
+            - `bin/devfox` 预编译二进制
+            - `config/` 运行时配置（config.json、limits.json）
+            - `skills/` 技能目录
+            - `README.md`、`LICENSE`
+
+            ### 源代码
+            - `${{ env.archive_prefix }}-src.zip` — 完整源代码
+
+            每个 zip 均附 `.sha256` 校验文件。
           prerelease: ${{ inputs.prerelease }}
           files: |
-            ${{ env.archive_path }}
-            ${{ env.archive_path }}.sha256
+            ${{ env.archive_prefix }}-linux-amd64.zip
+            ${{ env.archive_prefix }}-linux-amd64.zip.sha256
+            ${{ env.archive_prefix }}-linux-386.zip
+            ${{ env.archive_prefix }}-linux-386.zip.sha256
+            ${{ env.archive_prefix }}-linux-arm64.zip
+            ${{ env.archive_prefix }}-linux-arm64.zip.sha256
+            ${{ env.archive_prefix }}-src.zip
+            ${{ env.archive_prefix }}-src.zip.sha256
